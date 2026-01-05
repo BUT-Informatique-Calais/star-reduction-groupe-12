@@ -4,7 +4,7 @@ import cv2 as cv
 import numpy as np
 
 # Open and read the FITS file
-fits_file = './examples/HorseHead.fits'
+fits_file = './examples/test_M31_linear.fits'
 hdul = fits.open(fits_file)
 
 # Display information about the file
@@ -41,15 +41,10 @@ else:
     # Convert to uint8 for OpenCV
     image = ((data - data.min()) / (data.max() - data.min()) * 255).astype('uint8')
 
-
-
-# Define a kernel for erosion
-kernel = np.ones((3,3), np.uint8)
-# Perform erosion
-eroded_image = cv.erode(image, kernel, iterations=1)
-
-# Save the eroded image 
-cv.imwrite('./results/eroded.png', eroded_image)
+# Test avec un noyau 5x5 et 1 itération
+kernel = np.ones((5,5), np.uint8)
+eroded = cv.erode(image, kernel, iterations=1)
+cv.imwrite('./results/eroded.png', cv.cvtColor(eroded, cv.COLOR_RGB2BGR) if data.ndim == 3 else eroded)
 
 # Close the file
 hdul.close()
