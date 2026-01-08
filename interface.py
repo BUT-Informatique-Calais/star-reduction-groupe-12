@@ -3,6 +3,7 @@ from astropy.stats import sigma_clipped_stats
 from photutils.detection import DAOStarFinder
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+from matplotlib.animation import FuncAnimation
 import cv2 as cv
 import numpy as np
 import tkinter as tk
@@ -31,6 +32,10 @@ class StarReductionGUI:
         
         # pour eviter trop de calculs
         self.update_id = None
+        
+        # animation clignotement
+        self.animation = None
+        self.is_blinking = False
         
         self.setup_ui()
         
@@ -92,6 +97,10 @@ class StarReductionGUI:
         
         ttk.Button(control_frame, text="Sauvegarder le résultat", 
                    command=self.save_result).pack(fill=tk.X, pady=5)
+        
+        self.blink_button = ttk.Button(control_frame, text="Mode Clignotement", 
+                   command=self.toggle_blink_mode)
+        self.blink_button.pack(fill=tk.X, pady=5)
         
         self.info_label = ttk.Label(control_frame, text="", 
                                      foreground="green", wraplength=200)
@@ -283,6 +292,101 @@ class StarReductionGUI:
                 self.info_label.config(text=f"Sauvegardé!", foreground="green")
             except Exception as e:
                 self.info_label.config(text=f"Erreur save: {str(e)}", foreground="red")
+    
+    def toggle_blink_mode(self):
+        """Bascule entre le mode normal et le mode clignotement."""
+        if not hasattr(self, 'result_image') or self.data is None:
+            self.info_label.config(text="Pas de résultat!", foreground="red")
+            return
+        
+        if self.is_blinking:
+            self.stop_blinking()
+        else:
+            self.start_blinking()
+    
+    def start_blinking(self):
+        """Démarre l'animation clignotante dans le canvas."""
+        try:
+            self.is_blinking = True
+            self.blink_button.config(text="Vue Avant/Apres")
+            
+            # Masquer le deuxième axe et utiliser seulement le premier en plein écran
+            self.axes[1].set_visible(False)
+            self.axes[0].set_position([0.05, 0.05, 0.9, 0.9])
+            
+            # Images à alterner
+            images = [self.image, self.result_image]
+            labels = ['AVANT', 'APRÈS']
+            
+            # Fonction d'animation
+            def update(frame):
+                self.axes[0].clear()
+                self.axes[0].axis('off')
+                
+                current_img = images[frame % 2]
+                current_label = labels[frame % 2]
+                
+                if self.data.ndim == 3:
+                    self.axes[0].imshow(np.clip(current_img, 0, 1))
+                else:
+                    self.axes[0].imshow(np.clip(current_img, 0, 1), cmap='gray')
+                
+                self.axes[0].text(0.5, 0.05, current_label, 
+                                transform=self.axes[0].transAxes,
+                                ha='center', fontsize=16, fontweight='bold',
+                                bbox=dict(boxstyle='round', facecolor='yellow', alpha=0.8))
+                
+                return []
+            
+            # Créer l'animation (800ms par image)
+            self.animation = FuncAnimation(self.fig, update, frames=100,
+                                         interval=800, repeat=True, blit=False)
+            
+            self.canvas.draw()
+            self.info_label.config(text="Mode clignotement actif", foreground="blue")
+            
+        except Exception as e:
+            self.info_label.config(text=f"Erreur animation: {str(e)}", foreground="red")
+            self.is_blinking = False
+    
+    def stop_blinking(self):
+        """Arrête l'animation et revient à la vue normale."""
+        try:
+            self.is_blinking = False
+            self.blink_button.config(text="Mode Clignotement")
+            
+            # Arrêter l'animation
+            if self.animation:
+                self.animation.event_source.stop()
+                self.animation = None
+            
+            # Réafficher les deux axes
+            self.axes[1].set_visible(True)
+            self.axes[0].set_position([0.125, 0.11, 0.352, 0.77])
+            self.axes[1].set_position([0.547, 0.11, 0.352, 0.77])
+            
+            # Réafficher les images normalement
+            self.axes[0].clear()
+            self.axes[0].set_title("Image originale")
+            if self.data.ndim == 3:
+                self.axes[0].imshow(self.image)
+            else:
+                self.axes[0].imshow(self.image, cmap='gray')
+            self.axes[0].axis('off')
+            
+            self.axes[1].clear()
+            self.axes[1].set_title("Image avec réduction des étoiles")
+            if self.data.ndim == 3:
+                self.axes[1].imshow(np.clip(self.result_image, 0, 1))
+            else:
+                self.axes[1].imshow(np.clip(self.result_image, 0, 1), cmap='gray')
+            self.axes[1].axis('off')
+            
+            self.canvas.draw()
+            self.info_label.config(text="Vue normale", foreground="green")
+            
+        except Exception as e:
+            self.info_label.config(text=f"Erreur: {str(e)}", foreground="red")
 
 
 if __name__ == "__main__":
