@@ -27,10 +27,10 @@ class ImageComparator:
             self.image_after = image_after
         
         if self.image_before.shape != self.image_after.shape:
-            raise ValueError(
-                f"Les images doivent avoir la même taille. "
-                f"Avant: {self.image_before.shape}, Après: {self.image_after.shape}"
-            )
+            height = min(self.image_before.shape[0], self.image_after.shape[0])
+            width = min(self.image_before.shape[1], self.image_after.shape[1])
+            self.image_before = self.image_before[:height, :width]
+            self.image_after = self.image_after[:height, :width]
         
         self.title = title
         self.is_color = len(self.image_before.shape) == 3
@@ -72,7 +72,7 @@ class ImageComparator:
         if save_path:
             os.makedirs(os.path.dirname(save_path) if os.path.dirname(save_path) else '.', exist_ok=True)
             plt.savefig(save_path, dpi=150, bbox_inches='tight')
-            print(f"✓ Comparaison côte à côte sauvegardée : {save_path}")
+            print(f" Comparaison côte à côte sauvegardée : {save_path}")
         
         plt.show()
     
@@ -116,22 +116,110 @@ class ImageComparator:
         return anim
     
     def difference_analysis(self, method='subtraction', save_path=None):
-        """TODO: Implémenter l'analyse des différences entre les deux images."""
-        pass
+        before_norm = self.before_normalized
+        after_norm = self.after_normalized
+        
+        if before_norm.shape != after_norm.shape:
+            if len(before_norm.shape) == 3 and len(after_norm.shape) == 3:
+                if before_norm.shape[2] == 4 and after_norm.shape[2] == 3:
+                    before_norm = cv2.cvtColor((before_norm * 255).astype(np.uint8), cv2.COLOR_RGBA2RGB).astype(np.float32) / 255
+                elif before_norm.shape[2] == 3 and after_norm.shape[2] == 4:
+                    after_norm = cv2.cvtColor((after_norm * 255).astype(np.uint8), cv2.COLOR_RGBA2RGB).astype(np.float32) / 255
+        
+        if method == 'subtraction':
+            difference = np.abs(before_norm - after_norm)
+        elif method == 'absolute':
+            difference = np.abs(before_norm - after_norm)
+        else:
+            raise ValueError("method doit être 'subtraction' ou 'absolute'")
+        
+        fig, axes = plt.subplots(2, 2, figsize=(14, 12))
+        fig.suptitle(f"{self.title} - Analyse de Différence", fontsize=14, fontweight='bold')
+        
+        if self.is_color:
+            axes[0, 0].imshow(cv2.cvtColor((self.before_normalized * 255).astype(np.uint8), cv2.COLOR_BGR2RGB))
+        else:
+            axes[0, 0].imshow(self.before_normalized, cmap='gray')
+        axes[0, 0].set_title('Image Originale', fontweight='bold')
+        axes[0, 0].axis('off')
+        
+        if self.is_color:
+            axes[0, 1].imshow(cv2.cvtColor((self.after_normalized * 255).astype(np.uint8), cv2.COLOR_BGR2RGB))
+        else:
+            axes[0, 1].imshow(self.after_normalized, cmap='gray')
+        axes[0, 1].set_title('Image Traitée', fontweight='bold')
+        axes[0, 1].axis('off')
+        
+        if len(difference.shape) == 3:
+            diff_gray = cv2.cvtColor((difference * 255).astype(np.uint8), cv2.COLOR_BGR2GRAY).astype(np.float32) / 255
+        else:
+            diff_gray = difference
+        
+        im = axes[1, 0].imshow(diff_gray, cmap='hot', vmin=0, vmax=1)
+        axes[1, 0].set_title('Différence (pertes détectées)', fontweight='bold')
+        axes[1, 0].axis('off')
+        plt.colorbar(im, ax=axes[1, 0], label='Intensité [0-1]')
+        
+        stats_text = self._compute_statistics(diff_gray)
+        axes[1, 1].text(0.1, 0.9, stats_text, transform=axes[1, 1].transAxes,
+                       fontsize=11, verticalalignment='top', family='monospace',
+                       bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.8))
+        axes[1, 1].axis('off')
+        
+        plt.tight_layout()
+        
+        if save_path:
+            os.makedirs(os.path.dirname(save_path) if os.path.dirname(save_path) else '.', exist_ok=True)
+            plt.savefig(save_path, dpi=150, bbox_inches='tight')
+            print(f" Analyse de différence sauvegardée : {save_path}")
+        
+        plt.show()
+        return difference
     
     def _compute_statistics(self, difference):
-        """TODO: Calculer les statistiques sur la différence."""
-        pass
+        mean_diff = np.mean(difference)
+        std_diff = np.std(difference)
+        min_diff = np.min(difference)
+        max_diff = np.max(difference)
+        
+        threshold = 0.05
+        significant_pixels = np.sum(difference > threshold)
+        total_pixels = difference.size
+        percentage = (significant_pixels / total_pixels) * 100
+        
+        stats = f"""STATISTIQUES [0-1]
+
+Moyenne : {mean_diff:.4f}
+Écart-type : {std_diff:.4f}
+Min : {min_diff:.4f}
+Max : {max_diff:.4f}
+
+Pixels avec pertes (>{threshold}) :
+{percentage:.2f}% ({significant_pixels}/{total_pixels})"""
+        return stats
     
     def histogram_comparison(self, save_path=None):
-        """TODO: Implémenter la comparaison des histogrammes."""
+        """Optionnel : Comparaison des histogrammes."""
         pass
     
     def create_interactive_blend(self, save_path=None):
-        """TODO: Implémenter le mode interactif pour blender entre avant et après."""
+        """Optionnel : Mode interactif avec curseur."""
         pass
 
 
-# TODO: Implémenter l'exemple d'utilisation
 if __name__ == "__main__":
-    pass
+    before_path = "./results/original.png"
+    after_path = "./results/image_finale.png"
+    
+    try:
+        comparator = ImageComparator(before_path, after_path, title="Réduction d'Étoiles")
+        
+        comparator.compare_side_by_side(save_path="./results/comparison_side_by_side.png")
+        comparator.difference_analysis(method='subtraction', save_path="./results/difference_subtraction.png")
+        comparator.histogram_comparison(save_path="./results/histogram_comparison.png")
+        comparator.blink_comparison(interval=800, num_cycles=3, save_path="./results/blink_comparison.gif")
+        
+    except FileNotFoundError as e:
+        print(f"Erreur : {e}")
+    except Exception as e:
+        print(f"Erreur : {e}")
