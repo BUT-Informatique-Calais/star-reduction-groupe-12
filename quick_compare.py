@@ -1,137 +1,116 @@
-"""Image Comparator Module"""
+"""Script rapide pour utiliser le Comparateur Avant/Après
+"""
 
-import cv2
-import numpy as np
-import matplotlib.pyplot as plt
-from matplotlib.widgets import Slider
-from matplotlib.animation import FuncAnimation
+from image_comparator import ImageComparator
 import os
 
 
-class ImageComparator:
-    """Outil de comparaison d'images avant/après."""
+def main():
+    """Démonstration des fonctionnalités du comparateur."""
     
-    def __init__(self, image_before, image_after, title="Comparateur Avant/Après"):
-        if isinstance(image_before, str):
-            self.image_before = cv2.imread(image_before, cv2.IMREAD_UNCHANGED)
-            if self.image_before is None:
-                raise FileNotFoundError(f"Impossible de charger : {image_before}")
-        else:
-            self.image_before = image_before
+    print("\n--- Comparateur Avant/Après ---\n")
+    
+    # Chemins des images
+    before_path = "./results/original.png"
+    after_path = "./results/image_finale.png"
+    
+    # Vérifier que les fichiers existent
+    if not os.path.exists(before_path) or not os.path.exists(after_path):
+        print("Erreur : Les fichiers d'images n'existent pas")
+        print("Assurez-vous d'avoir exécuté phase2_masque.py d'abord")
+        return
+    
+    try:
+        #creer le comparateur
+        comparator = ImageComparator(
+            before_path,
+            after_path,
+            title="Comparateur Avant/Après - Réduction d'Étoiles"
+        )
+        
+        #menu interactif
+        while True:
+            print("\n--- Menu ---")
+            print("1. Comparaison côte à côte")
+            print("2. Analyse de différence (soustraction)")
+            print("3. Analyse de différence (valeur absolue)")
+            print("4. Comparaison d'histogrammes")
+            print("5. Mode clignotement")
+            print("6. Mode interactif")
+            print("7. Générer tous les fichiers")
+            print("8. Quitter")
             
-        if isinstance(image_after, str):
-            self.image_after = cv2.imread(image_after, cv2.IMREAD_UNCHANGED)
-            if self.image_after is None:
-                raise FileNotFoundError(f"Impossible de charger : {image_after}")
-        else:
-            self.image_after = image_after
-        
-        if self.image_before.shape != self.image_after.shape:
-            raise ValueError(
-                f"Les images doivent avoir la même taille. "
-                f"Avant: {self.image_before.shape}, Après: {self.image_after.shape}"
-            )
-        
-        self.title = title
-        self.is_color = len(self.image_before.shape) == 3
-        self.before_normalized = self._normalize(self.image_before)
-        self.after_normalized = self._normalize(self.image_after)
-        
-    def _normalize(self, image):
-        image_float = image.astype(np.float32)
-        min_val = image_float.min()
-        max_val = image_float.max()
-        
-        if max_val > min_val:
-            normalized = (image_float - min_val) / (max_val - min_val)
-        else:
-            normalized = image_float
+            choice = input("\nChoisissez une option (1-8) : ").strip()
             
-        return normalized
-    
-    def compare_side_by_side(self, save_path=None):
-        fig, axes = plt.subplots(1, 2, figsize=(14, 6))
-        fig.suptitle(self.title, fontsize=16, fontweight='bold')
-        
-        if self.is_color:
-            axes[0].imshow(cv2.cvtColor(self.before_normalized, cv2.COLOR_BGR2RGB))
-        else:
-            axes[0].imshow(self.before_normalized, cmap='gray')
-        axes[0].set_title('Image Originale', fontsize=12, fontweight='bold')
-        axes[0].axis('off')
-        
-        if self.is_color:
-            axes[1].imshow(cv2.cvtColor(self.after_normalized, cv2.COLOR_BGR2RGB))
-        else:
-            axes[1].imshow(self.after_normalized, cmap='gray')
-        axes[1].set_title('Image Traitée', fontsize=12, fontweight='bold')
-        axes[1].axis('off')
-        
-        plt.tight_layout()
-        
-        if save_path:
-            os.makedirs(os.path.dirname(save_path) if os.path.dirname(save_path) else '.', exist_ok=True)
-            plt.savefig(save_path, dpi=150, bbox_inches='tight')
-            print(f"✓ Comparaison côte à côte sauvegardée : {save_path}")
-        
-        plt.show()
-    
-    def blink_comparison(self, interval=500, num_cycles=3, save_path=None):
-        fig, ax = plt.subplots(figsize=(10, 8))
-        fig.suptitle(f"{self.title} - Mode Clignotement", fontsize=14, fontweight='bold')
-        
-        images = []
-        labels = []
-        for _ in range(num_cycles):
-            images.extend([self.before_normalized, self.after_normalized])
-            labels.extend(['AVANT', 'APRÈS'])
-        
-        if self.is_color:
-            im = ax.imshow(cv2.cvtColor(images[0], cv2.COLOR_BGR2RGB))
-        else:
-            im = ax.imshow(images[0], cmap='gray')
-        
-        text = ax.text(0.5, 0.05, '', transform=ax.transAxes, 
-                      ha='center', fontsize=14, fontweight='bold',
-                      bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.8))
-        ax.axis('off')
-        
-        def update(frame):
-            if self.is_color:
-                im.set_data(cv2.cvtColor(images[frame % len(images)], cv2.COLOR_BGR2RGB))
+            if choice == '1':
+                comparator.compare_side_by_side(
+                    save_path="./results/comparison_side_by_side.png"
+                )
+                
+            elif choice == '2':
+                comparator.difference_analysis(
+                    method='subtraction',
+                    save_path="./results/difference_analysis_subtract.png"
+                )
+                
+            elif choice == '3':
+                comparator.difference_analysis(
+                    method='absolute',
+                    save_path="./results/difference_analysis_absolute.png"
+                )
+                
+            elif choice == '4':
+                comparator.histogram_comparison(
+                    save_path="./results/histogram_comparison.png"
+                )
+                
+            elif choice == '5':
+                comparator.blink_comparison(
+                    interval=800,
+                    num_cycles=3,
+                    save_path="./results/blink_comparison.gif"
+                )
+                
+            elif choice == '6':
+                comparator.create_interactive_blend(
+                    save_path="./results/interactive_blend.png"
+                )
+                
+            elif choice == '7':
+                comparator.compare_side_by_side(
+                    save_path="./results/01_comparison_side_by_side.png"
+                )
+                comparator.difference_analysis(
+                    method='subtraction',
+                    save_path="./results/02_difference_subtraction.png"
+                )
+                comparator.difference_analysis(
+                    method='absolute',
+                    save_path="./results/03_difference_absolute.png"
+                )
+                comparator.histogram_comparison(
+                    save_path="./results/04_histogram_comparison.png"
+                )
+                comparator.blink_comparison(
+                    interval=800,
+                    num_cycles=2,
+                    save_path="./results/05_blink_comparison.gif"
+                )
+                
+                print("\nFichiers générés avec succès")
+                
+            elif choice == '8':
+                print("\nAu revoir")
+                break
+                
             else:
-                im.set_data(images[frame % len(images)])
-            text.set_text(labels[frame % len(labels)])
-            return im, text
+                print("Option invalide")
         
-        anim = FuncAnimation(fig, update, frames=len(images) * 2, 
-                           interval=interval, repeat=True, blit=True)
-        
-        if save_path:
-            os.makedirs(os.path.dirname(save_path) if os.path.dirname(save_path) else '.', exist_ok=True)
-            anim.save(save_path, writer='pillow', fps=2)
-            print(f" Animation de clignotement sauvegardée : {save_path}")
-        
-        plt.show()
-        return anim
-    
-    def difference_analysis(self, method='subtraction', save_path=None):
-        """TODO: Implémenter l'analyse des différences entre les deux images."""
-        pass
-    
-    def _compute_statistics(self, difference):
-        """TODO: Calculer les statistiques sur la différence."""
-        pass
-    
-    def histogram_comparison(self, save_path=None):
-        """TODO: Implémenter la comparaison des histogrammes."""
-        pass
-    
-    def create_interactive_blend(self, save_path=None):
-        """TODO: Implémenter le mode interactif pour blender entre avant et après."""
-        pass
+    except FileNotFoundError as e:
+        print(f"Erreur : {e}")
+    except Exception as e:
+        print(f"Erreur : {e}")
 
 
-# TODO: Implémenter l'exemple d'utilisation
 if __name__ == "__main__":
-    pass
+    main()
