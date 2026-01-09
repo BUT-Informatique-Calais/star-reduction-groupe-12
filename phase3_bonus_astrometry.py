@@ -143,10 +143,6 @@ def get_annotations(job_id):
     return None
 
 def get_wcs_from_calibration(job_id):
-    """
-    Recupere le fichier WCS (World Coordinate System) depuis l'API
-    Pour convertir coordonnees RA/Dec en pixels
-    """
     print(f"\nTelechargement de la calibration WCS...")
     
     wcs_url = f"http://nova.astrometry.net/wcs_file/{job_id}"
@@ -174,10 +170,6 @@ def get_wcs_from_calibration(job_id):
         return None
 
 def get_stars_from_gaia(ra_center, dec_center, image_shape, pixscale, mag_limit=18):
-    """
-    Interroge le catalogue Gaia pour obtenir TOUTES les etoiles du champ
-    Calcule automatiquement le rayon necessaire depuis taille image
-    """
     diagonal_pixels = np.sqrt(image_shape[0]**2 + image_shape[1]**2)
     diagonal_arcsec = diagonal_pixels * pixscale
     radius_deg = (diagonal_arcsec / 3600.0) / 2.0
@@ -221,19 +213,19 @@ def get_stars_from_gaia(ra_center, dec_center, image_shape, pixscale, mag_limit=
         print(f"Installer astroquery: pip install astroquery")
         return None
 
-def create_mask_from_catalog(image_shape, stars, wcs, mag_limit=15):
-    """
-    Cree masque depuis catalogue complet avec conversion WCS
-    """
+def create_mask_from_catalog(image_shape, stars, wcs, image_data, intensity_threshold=None):
     print(f"\nCreation masque depuis catalogue Gaia...")
+    
+    if intensity_threshold is None:
+        intensity_threshold = np.percentile(image_data, 85)
+    
+    print(f"  Seuil intensite: {intensity_threshold:.1f}")
     
     mask = np.zeros(image_shape, dtype=np.uint8)
     n_masked = 0
+    n_total = 0
     
     for star in stars:
-        if star['mag'] > mag_limit:
-            continue
-            
         coord = SkyCoord(ra=star['ra']*u.degree, dec=star['dec']*u.degree)
         x, y = wcs.world_to_pixel(coord)
         
@@ -241,13 +233,18 @@ def create_mask_from_catalog(image_shape, stars, wcs, mag_limit=15):
         y = int(y)
         
         if 0 <= x < image_shape[1] and 0 <= y < image_shape[0]:
-            radius = int(18 - star['mag'])
-            radius = max(2, min(radius, 12))
+            n_total += 1
             
-            cv2.circle(mask, (x, y), radius, 255, -1)
-            n_masked += 1
+            pixel_value = image_data[y, x]
+            
+            if pixel_value > intensity_threshold:
+                radius = int(18 - star['mag'])
+                radius = max(2, min(radius, 12))
+                
+                cv2.circle(mask, (x, y), radius, 255, -1)
+                n_masked += 1
     
-    print(f"{n_masked} etoiles masquees dans l'image (mag < {mag_limit})")
+    print(f"{n_masked}/{n_total} etoiles masquees (visibles sur l'image)")
     return mask, n_masked
 
 if API_KEY == "votre_cle_api_ici":
@@ -293,27 +290,22 @@ if USE_API:
     annotations = get_annotations(job_id)
     
     if calibration:
-        # Recuperer WCS pour conversion RA/Dec -> pixels
         wcs = get_wcs_from_calibration(job_id)
         
         if wcs:
-            # Interroger catalogue Gaia pour TOUTES les etoiles du champ
             ra_center = calibration.get('ra')
             dec_center = calibration.get('dec')
             pixscale = calibration.get('pixscale')
             
-            stars = get_stars_from_gaia(ra_center, dec_center, image.shape, pixscale, mag_limit=18)
+            stars = get_stars_from_gaia(ra_center, dec_center, image.shape, pixscale, mag_limit=20)
             
             if stars:
-                # Creer masque depuis catalogue complet (SANS detection sur image)
-                # Limite magnitude 15 pour ne garder que etoiles brillantes
                 masque, n_stars = create_mask_from_catalog(
                     image.shape,
                     stars,
                     wcs,
-                    mag_limit=15
+                    image
                 )
-                
                 print(f"Masque cree : {np.sum(masque > 0)} pixels masques ({100*np.sum(masque > 0)/masque.size:.2f}%)")
                 method = "Astrometry.net + Gaia DR3"
             else:
@@ -366,13 +358,12 @@ axes[0].imshow(image_norm, cmap='gray', vmin=0, vmax=1)
 axes[0].set_title(f"Original\n({method})")
 axes[0].axis('off')
 
-axes[1].imshow(masque, cmap='Reds', alpha=0.7)
+axes[1].imshow(masque, cmap='gray')
 axes[1].set_title(f"Masque catalogue\n({np.sum(masque > 0)} pixels)")
 axes[1].axis('off')
 
 plt.tight_layout()
 plt.savefig("results/astrometry_comparaison.jpg", dpi=150, bbox_inches='tight')
 print("  - results/astrometry_comparaison.jpg")
-
 
 
