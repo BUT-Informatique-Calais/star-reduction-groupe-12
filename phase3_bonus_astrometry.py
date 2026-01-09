@@ -7,6 +7,9 @@ import time
 import json
 from pathlib import Path
 from scipy.ndimage import gaussian_filter
+from astropy import units as u
+from astropy.coordinates import SkyCoord
+from astropy.wcs import WCS
 
 API_KEY = "siupcwbetlrmnrwm"
 API_URL = "http://nova.astrometry.net/api/"
@@ -139,34 +142,121 @@ def get_annotations(job_id):
     print(f"Echec recuperation annotations")
     return None
 
-def create_mask_from_calibration(image_shape, calibration, image_data):
-    print(f"\nAPI Astrometry.net - champ identifie:")
-    print(f"  RA={calibration.get('ra'):.2f}, Dec={calibration.get('dec'):.2f}")
-    print(f"  Echelle: {calibration.get('pixscale'):.2f} arcsec/pixel")
-    print(f"\nDetection locale avec DAOStarFinder...\n")
+def get_wcs_from_calibration(job_id):
+    """
+    Recupere le fichier WCS (World Coordinate System) depuis l'API
+    Pour convertir coordonnees RA/Dec en pixels
+    """
+    print(f"\nTelechargement de la calibration WCS...")
     
-    from photutils.detection import DAOStarFinder
-    from scipy.ndimage import gaussian_filter
+    wcs_url = f"http://nova.astrometry.net/wcs_file/{job_id}"
+    response = requests.get(wcs_url)
     
-    mean = np.mean(image_data)
-    std = np.std(image_data)
-    threshold = mean + 3 * std
+    if response.status_code != 200:
+        print(f"Echec telechargement WCS")
+        return None
     
-    daofind = DAOStarFinder(fwhm=5.0, threshold=threshold)
-    sources = daofind(image_data)
+    wcs_path = "temp_wcs.fits"
+    with open(wcs_path, 'wb') as f:
+        f.write(response.content)
     
-    print(f"{len(sources)} etoiles detectees")
+    try:
+        wcs = WCS(wcs_path)
+        import os
+        os.remove(wcs_path)
+        print(f"WCS recupere avec succes")
+        return wcs
+    except Exception as e:
+        print(f"Erreur lecture WCS: {e}")
+        import os
+        if os.path.exists(wcs_path):
+            os.remove(wcs_path)
+        return None
+
+def get_stars_from_gaia(ra_center, dec_center, image_shape, pixscale, mag_limit=18):
+    """
+    Interroge le catalogue Gaia pour obtenir TOUTES les etoiles du champ
+    Calcule automatiquement le rayon necessaire depuis taille image
+    """
+    # Calculer le rayon necessaire pour couvrir toute l'image
+    # Diagonale image en pixels * pixscale en arcsec/pixel / 3600 = rayon en degres
+    diagonal_pixels = np.sqrt(image_shape[0]**2 + image_shape[1]**2)
+    diagonal_arcsec = diagonal_pixels * pixscale
+    radius_deg = (diagonal_arcsec / 3600.0) / 2.0  # Diviser par 2 pour avoir le rayon
+    
+    # Ajouter 10% de marge
+    radius_deg *= 1.1
+    
+    print(f"\nInterrogation catalogue Gaia DR3...")
+    print(f"  Centre: RA={ra_center:.4f}, Dec={dec_center:.4f}")
+    print(f"  Rayon calcule: {radius_deg:.4f} degres ({diagonal_arcsec/60:.2f} arcmin)")
+    print(f"  Magnitude limite: {mag_limit}")
+    
+    try:
+        from astroquery.gaia import Gaia
+        
+        query = f"""
+        SELECT TOP 10000
+            ra, dec, phot_g_mean_mag
+        FROM gaiadr3.gaia_source
+        WHERE 
+            CONTAINS(POINT('ICRS', ra, dec),
+                    CIRCLE('ICRS', {ra_center}, {dec_center}, {radius_deg})) = 1
+            AND phot_g_mean_mag < {mag_limit}
+        ORDER BY phot_g_mean_mag
+        """
+        
+        job = Gaia.launch_job(query)
+        results = job.get_results()
+        
+        stars = []
+        for row in results:
+            stars.append({
+                'ra': row['ra'],
+                'dec': row['dec'],
+                'mag': row['phot_g_mean_mag']
+            })
+        
+        print(f"{len(stars)} etoiles recuperees depuis Gaia DR3")
+        return stars
+        
+    except Exception as e:
+        print(f"Erreur interrogation Gaia: {e}")
+        print(f"Installer astroquery: pip install astroquery")
+        return None
+
+def create_mask_from_catalog(image_shape, stars, wcs, mag_limit=15):
+    """
+    Cree masque depuis catalogue complet avec conversion WCS
+    """
+    print(f"\nCreation masque depuis catalogue Gaia...")
     
     mask = np.zeros(image_shape, dtype=np.uint8)
-    for source in sources:
-        x = int(source['xcentroid'])
-        y = int(source['ycentroid'])
-        flux = source['flux']
-        
-        radius = max(5, min(int(3 + np.log10(flux/1000)), 30))
-        cv2.circle(mask, (x, y), radius, 255, -1)
+    n_masked = 0
     
-    return mask, len(sources)
+    for star in stars:
+        if star['mag'] > mag_limit:
+            continue
+            
+        # Convertir RA/Dec en pixels avec WCS
+        coord = SkyCoord(ra=star['ra']*u.degree, dec=star['dec']*u.degree)
+        x, y = wcs.world_to_pixel(coord)
+        
+        x = int(x)
+        y = int(y)
+        
+        # Verifier dans les limites
+        if 0 <= x < image_shape[1] and 0 <= y < image_shape[0]:
+            # Rayon adaptatif selon magnitude (plus petit qu'avant)
+            # Magnitude 8 = rayon 10, magnitude 15 = rayon 3
+            radius = int(18 - star['mag'])
+            radius = max(2, min(radius, 12))
+            
+            cv2.circle(mask, (x, y), radius, 255, -1)
+            n_masked += 1
+    
+    print(f"{n_masked} etoiles masquees dans l'image (mag < {mag_limit})")
+    return mask, n_masked
 
 if API_KEY == "votre_cle_api_ici":
     print("ATTENTION : Vous devez configurer votre cle API Astrometry.net")
@@ -211,16 +301,38 @@ if USE_API:
     annotations = get_annotations(job_id)
     
     if calibration:
-        masque, n_stars = create_mask_from_calibration(
-            image.shape, 
-            calibration,
-            image
-        )
+        # Recuperer WCS pour conversion RA/Dec -> pixels
+        wcs = get_wcs_from_calibration(job_id)
         
-        print(f"Masque cree : {np.sum(masque > 0)} pixels masques ({100*np.sum(masque > 0)/masque.size:.2f}%)")
-        method = "Astrometry.net + DAOStarFinder"
+        if wcs:
+            # Interroger catalogue Gaia pour TOUTES les etoiles du champ
+            ra_center = calibration.get('ra')
+            dec_center = calibration.get('dec')
+            pixscale = calibration.get('pixscale')
+            
+            stars = get_stars_from_gaia(ra_center, dec_center, image.shape, pixscale, mag_limit=18)
+            
+            if stars:
+                # Creer masque depuis catalogue complet (SANS detection sur image)
+                # Limite magnitude 15 pour ne garder que etoiles brillantes
+                masque, n_stars = create_mask_from_catalog(
+                    image.shape,
+                    stars,
+                    wcs,
+                    mag_limit=15
+                )
+                
+                print(f"Masque cree : {np.sum(masque > 0)} pixels masques ({100*np.sum(masque > 0)/masque.size:.2f}%)")
+                method = "Astrometry.net + Gaia DR3"
+            else:
+                print("\nImpossible de recuperer catalogue Gaia")
+                USE_API = False
+        else:
+            print("\nImpossible de recuperer WCS")
+            USE_API = False
     else:
         print("\nImpossible de recuperer la calibration")
+        USE_API = False
         USE_API = False
 
 if not USE_API:
@@ -249,37 +361,25 @@ if not USE_API:
     print(f"Masque cree : {np.sum(masque > 0)} pixels masques ({100*np.sum(masque > 0)/masque.size:.2f}%)")
     method = "DAOStarFinder (backup)"
 
-masque_adouci = gaussian_filter(masque.astype(float) / 255, sigma=3)
-
-reduction_factor = 0.9
-image_finale = image_norm.copy()
-image_finale = image_norm * (1 - masque_adouci * reduction_factor)
-
-print(f"\nReduction appliquee (facteur: {reduction_factor*100}%)")
-
 Path("results").mkdir(exist_ok=True)
 
 plt.imsave("results/astrometry_masque.png", masque, cmap='gray')
-plt.imsave("results/astrometry_finale.png", image_finale, cmap='gray', vmin=0, vmax=1)
 
 print("\nImages sauvegardees :")
 print("  - results/astrometry_masque.png")
-print("  - results/astrometry_finale.png")
 
-fig, axes = plt.subplots(1, 3, figsize=(18, 6))
+fig, axes = plt.subplots(1, 2, figsize=(14, 6))
 
 axes[0].imshow(image_norm, cmap='gray', vmin=0, vmax=1)
 axes[0].set_title(f"Original\n({method})")
 axes[0].axis('off')
 
 axes[1].imshow(masque, cmap='Reds', alpha=0.7)
-axes[1].set_title(f"Masque\n({np.sum(masque > 0)} pixels)")
+axes[1].set_title(f"Masque catalogue\n({np.sum(masque > 0)} pixels)")
 axes[1].axis('off')
-
-axes[2].imshow(image_finale, cmap='gray', vmin=0, vmax=1)
-axes[2].set_title(f"Apres reduction\n({reduction_factor*100}% sur etoiles)")
-axes[2].axis('off')
 
 plt.tight_layout()
 plt.savefig("results/astrometry_comparaison.jpg", dpi=150, bbox_inches='tight')
 print("  - results/astrometry_comparaison.jpg")
+
+
