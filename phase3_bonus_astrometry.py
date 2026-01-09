@@ -178,13 +178,9 @@ def get_stars_from_gaia(ra_center, dec_center, image_shape, pixscale, mag_limit=
     Interroge le catalogue Gaia pour obtenir TOUTES les etoiles du champ
     Calcule automatiquement le rayon necessaire depuis taille image
     """
-    # Calculer le rayon necessaire pour couvrir toute l'image
-    # Diagonale image en pixels * pixscale en arcsec/pixel / 3600 = rayon en degres
     diagonal_pixels = np.sqrt(image_shape[0]**2 + image_shape[1]**2)
     diagonal_arcsec = diagonal_pixels * pixscale
-    radius_deg = (diagonal_arcsec / 3600.0) / 2.0  # Diviser par 2 pour avoir le rayon
-    
-    # Ajouter 10% de marge
+    radius_deg = (diagonal_arcsec / 3600.0) / 2.0
     radius_deg *= 1.1
     
     print(f"\nInterrogation catalogue Gaia DR3...")
@@ -238,17 +234,13 @@ def create_mask_from_catalog(image_shape, stars, wcs, mag_limit=15):
         if star['mag'] > mag_limit:
             continue
             
-        # Convertir RA/Dec en pixels avec WCS
         coord = SkyCoord(ra=star['ra']*u.degree, dec=star['dec']*u.degree)
         x, y = wcs.world_to_pixel(coord)
         
         x = int(x)
         y = int(y)
         
-        # Verifier dans les limites
         if 0 <= x < image_shape[1] and 0 <= y < image_shape[0]:
-            # Rayon adaptatif selon magnitude (plus petit qu'avant)
-            # Magnitude 8 = rayon 10, magnitude 15 = rayon 3
             radius = int(18 - star['mag'])
             radius = max(2, min(radius, 12))
             
@@ -381,5 +373,6 @@ axes[1].axis('off')
 plt.tight_layout()
 plt.savefig("results/astrometry_comparaison.jpg", dpi=150, bbox_inches='tight')
 print("  - results/astrometry_comparaison.jpg")
+
 
 
